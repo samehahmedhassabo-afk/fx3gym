@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+:root,
+[data-theme="light"] {
+  --brand-navy: #00002d;
+  --brand-blue: #0065a7;
+  --brand-red: #ac2500;
+  --brand-white: #fff;
+
+  --background: #fff;
+  --surface: #fff;
+  --surface-2: #f3f5fa;
+  --border: #e3e7ef;
+  --foreground: #00002d;
+  --muted: #6b7280;
+
+  --primary: #ac2500;
+  --primary-hover: #8b1d00;
+  --primary-foreground: #fff;
+  --accent: #0065a7;
+  --accent-hover: #00538a;
+  --accent-foreground: #fff;
+
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #0065a7;
+
+  color-scheme: light;
+}
+
+/* الوضع الليلي — night mode */
+[data-theme="dark"] {
+  --brand-navy: #dfe6f5;
+  --brand-blue: #4ea3e0;
+  --brand-red: #e35c33;
+  --brand-white: #0f1420;
+
+  --background: #0b0f17;
+  --surface: #121826;
+  --surface-2: #1b2333;
+  --border: #2a3346;
+  --foreground: #e7ecf6;
+  --muted: #9aa6bd;
+
+  --primary: #c8401a;
+  --primary-hover: #ac2500;
+  --primary-foreground: #fff;
+  --accent: #2b7fbe;
+  --accent-hover: #1f6699;
+  --accent-foreground: #fff;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  color-scheme: dark;
+}
+
+/* شارات ملوّنة — ألوان منفصلة للوضع الليلي */
+.badge-success { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+.badge-warning { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+.badge-danger  { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.badge-info    { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+
+[data-theme="dark"] .badge-success { background: #06281f; color: #6ee7b7; border-color: #14513c; }
+[data-theme="dark"] .badge-warning { background: #2d2008; color: #fcd34d; border-color: #5c4310; }
+[data-theme="dark"] .badge-danger  { background: #2d1212; color: #fca5a5; border-color: #5c2020; }
+[data-theme="dark"] .badge-info    { background: #101f3d; color: #93c5fd; border-color: #1e3a6b; }
+
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, "Cairo", "Tajawal", "Inter", Arial, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  /* The nav drawer is parked off-canvas when closed. Chromium ignores it for
+     scroll width, Safari does not — without this the whole page can be dragged
+     sideways on an iPhone. */
+  overflow-x: hidden;
+}
+
+body {
+  font-family: Cairo, Tajawal, ui-sans-serif, system-ui, sans-serif;
+}

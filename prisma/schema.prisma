@@ -1,0 +1,892 @@
+// FX3 — Fight & Fitness Centre gym management system
+// Prisma schema reconstructed from the shipped SQLite database's exact
+// CREATE TABLE / CREATE INDEX statements (no enum/CHECK constraints exist at
+// the DB level — string unions below are enforced by Zod at the API layer).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  fullName     String
+  role         String   @default("RECEPTIONIST") // ADMIN | MANAGER | RECEPTIONIST | CASHIER | TRAINER
+  phone        String?
+  isActive     Boolean  @default(true)
+  permissions  String? // JSON-encoded array of permission keys, overrides role defaults
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  trainer         Trainer?
+  auditLogs       AuditLog[]
+  checkIns        Attendance[]       @relation("AttendanceCheckedInBy")
+  recordedPayments Payment[]         @relation("PaymentRecordedBy")
+  cashierSessions CashierSession[]
+  sales           Sale[]             @relation("SaleSoldBy")
+  createdTasks    StaffTask[]
+  createdDues     DuePayment[]
+  createdRentals  AreaRental[]
+  loyaltyAdjustments      LoyaltyTransaction[] @relation("LoyaltyCreatedBy")
+  pendingChangesRequested PendingChange[]      @relation("PendingChangeRequestedBy")
+  pendingChangesReviewed  PendingChange[]      @relation("PendingChangeReviewedBy")
+  adminNotifications      AdminNotification[]  @relation("AdminNotificationTarget")
+
+  @@index([role])
+}
+
+model Member {
+  id             String    @id @default(cuid())
+  memberCode     String    @unique
+  firstName      String
+  lastName       String
+  phone          String    @unique
+  email          String?
+  gender         String // MALE | FEMALE
+  dateOfBirth    DateTime?
+  nationalId     String?
+  address        String?
+  photoUrl       String?
+  emergencyName  String?
+  emergencyPhone String?
+  medicalNotes   String?
+  goals          String?
+  comments       String?
+  referralSource String?
+  referredByMemberId String?
+  referredByMember    Member?   @relation("MemberReferral", fields: [referredByMemberId], references: [id], onDelete: SetNull)
+  status         String    @default("ACTIVE") // ACTIVE | INACTIVE | EXPIRED | FROZEN | CANCELLED
+  joinedAt       DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  // Stamped when a member checks in after using up all sessions on an
+  // active-but-not-yet-expired subscription. Consumed and cleared by
+  // createSubscription() so the renewal starts from this visit's date.
+  pendingRenewalStartDate DateTime?
+
+  subscriptions Subscription[]
+  attendances   Attendance[]
+  payments      Payment[]
+  sales         Sale[]
+  measurements  Measurement[]
+  fitnessTests  FitnessTestSession[]
+  trainingPlans TrainingPlan[]
+  notifications Notification[]
+  dues          DuePayment[]
+  loyaltyAccount LoyaltyAccount?
+  referrals     Member[] @relation("MemberReferral")
+  nutritionPlans NutritionPlan[]
+
+  @@index([memberCode])
+  @@index([phone])
+  @@index([referredByMemberId])
+  @@index([status])
+}
+
+model SubscriptionPlan {
+  id              String   @id @default(cuid())
+  name            String
+  nameAr          String?
+  type            String   @default("GYM") // GYM | CLASSES | PERSONAL_TRAINING | HYBRID
+  durationDays    Int
+  price           Float
+  classesIncluded Int?
+  description     String?
+  isActive        Boolean  @default(true)
+  isOffer         Boolean  @default(false)
+  originalPrice   Float?
+  offerEndsAt     DateTime?
+  defaultScheduleId String?
+  defaultSchedule   ClassSchedule? @relation("PlanDefaultSchedule", fields: [defaultScheduleId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id               String    @id @default(cuid())
+  memberId         String
+  member           Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  planId           String
+  plan             SubscriptionPlan @relation(fields: [planId], references: [id])
+  startDate        DateTime
+  endDate          DateTime
+  classesRemaining Int?
+  status           String    @default("ACTIVE") // ACTIVE | EXPIRED | FROZEN | CANCELLED
+  trainerId        String?
+  trainer          Trainer?  @relation(fields: [trainerId], references: [id], onDelete: SetNull)
+  scheduleId       String?
+  schedule         ClassSchedule? @relation("SubscriptionSchedule", fields: [scheduleId], references: [id], onDelete: SetNull)
+  freezeStart      DateTime?
+  freezeEnd        DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  attendances Attendance[]
+  payments    Payment[]
+
+  @@index([memberId])
+  @@index([planId])
+  @@index([status, endDate])
+  @@index([endDate])
+  @@index([trainerId])
+  @@index([scheduleId])
+}
+
+model Attendance {
+  id             String    @id @default(cuid())
+  memberId       String
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  checkedById    String?   @map("checkedInById")
+  checkedInBy    User?     @relation("AttendanceCheckedInBy", fields: [checkedById], references: [id], onDelete: SetNull)
+  checkInTime    DateTime  @default(now())
+  checkOutTime   DateTime?
+  method         String    @default("QR") // QR | MANUAL | CODE
+  notes          String?
+
+  @@index([checkInTime])
+  @@index([memberId, checkInTime])
+  @@index([subscriptionId])
+}
+
+model Discipline {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  nameAr    String?
+  color     String?
+  legacyKey String?
+  isActive  Boolean  @default(true)
+  sortOrder Int       @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classSchedules ClassSchedule[] @relation("ScheduleDiscipline")
+
+  @@index([isActive, sortOrder])
+}
+
+model Trainer {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio              String?
+  specialties      String // JSON-encoded array
+  yearsExperience  Int?
+  certifications   String?
+  hourlyRate       Float?
+  commissionPct    Float?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  subscriptions  Subscription[]
+  classSchedules ClassSchedule[]
+  trainingPlans  TrainingPlan[]
+  payments       Payment[]
+  dues           DuePayment[]
+  rentals        AreaRental[]
+  nutritionPlans NutritionPlan[]
+}
+
+model ClassSchedule {
+  id            String    @id @default(cuid())
+  name          String
+  nameAr        String?
+  disciplineId  String?
+  discipline    Discipline? @relation("ScheduleDiscipline", fields: [disciplineId], references: [id])
+  trainerId     String?
+  trainer       Trainer?  @relation(fields: [trainerId], references: [id], onDelete: SetNull)
+  weekdays      String // JSON-encoded array of weekday numbers, e.g. "[1,3,5]"
+  startMinute   Int // minutes since midnight
+  durationMin   Int       @default(60)
+  capacity      Int       @default(20)
+  room          String?
+  dayTimes      String? // JSON-encoded per-weekday start-minute overrides
+  startsOn      DateTime  @default(now())
+  endsOn        DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  planDefaults  SubscriptionPlan[] @relation("PlanDefaultSchedule")
+  subscriptions Subscription[]     @relation("SubscriptionSchedule")
+
+  sessions ClassSession[]
+
+  @@index([isActive])
+}
+
+model ClassSession {
+  id         String    @id @default(cuid())
+  scheduleId String
+  schedule   ClassSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  startTime  DateTime
+  endTime    DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([scheduleId, startTime])
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  sku          String   @unique
+  name         String
+  nameAr       String?
+  category     String   @default("SUPPLEMENT") // SUPPLEMENT | DRINK | APPAREL | ACCESSORY | OTHER
+  price        Float
+  cost         Float?
+  stock        Int      @default(0)
+  reorderLevel Int      @default(5)
+  imageUrl     String?
+  description  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  saleItems SaleItem[]
+
+  @@index([category])
+}
+
+model Sale {
+  id           String    @id @default(cuid())
+  saleNumber   String    @unique
+  memberId     String?
+  member       Member?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  soldById     String
+  soldBy       User      @relation("SaleSoldBy", fields: [soldById], references: [id])
+  subtotal     Float
+  discount     Float     @default(0)
+  total        Float
+  notes        String?
+  refundedAt   DateTime?
+  refundReason String?
+  sessionId    String?
+  session      CashierSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+
+  items    SaleItem[]
+  payments Payment[]
+
+  @@index([createdAt])
+  @@index([sessionId])
+}
+
+model SaleItem {
+  id        String @id @default(cuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  unitPrice Float
+  subtotal  Float
+}
+
+model CashierSession {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id])
+  openingFloat Float     @default(0)
+  closingCash  Float?
+  openedAt     DateTime  @default(now())
+  closedAt     DateTime?
+  status       String    @default("OPEN") // OPEN | CLOSED
+  notes        String?
+
+  sales    Sale[]
+  payments Payment[]
+
+  @@index([status])
+  @@index([userId, status])
+}
+
+model Voucher {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  type        String    @default("PERCENT") // PERCENT | FIXED
+  value       Float
+  description String?
+  maxUses     Int?
+  usedCount   Int       @default(0)
+  validFrom   DateTime?
+  validUntil  DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  payments Payment[]
+
+  @@index([isActive])
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  invoiceNumber String   @unique
+  memberId      String?
+  member        Member?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  subscriptionId String?
+  subscription  Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  saleId        String?
+  sale          Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  trainerId     String?
+  trainer       Trainer? @relation(fields: [trainerId], references: [id])
+  amount        Float
+  method        String   @default("CASH") // CASH | CARD | INSTAPAY | VODAFONE_CASH | BANK_TRANSFER | OTHER
+  type          String   @default("SUBSCRIPTION") // SUBSCRIPTION | PERSONAL_TRAINING | PRODUCT_SALE | REGISTRATION_FEE | AREA_RENTAL | OTHER
+  notes         String?
+  recordedById  String
+  recordedBy    User     @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  sessionId     String?
+  session       CashierSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  voucherId     String?
+  voucher       Voucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
+  discount      Float    @default(0)
+  paidAt        DateTime @default(now())
+  createdAt     DateTime @default(now())
+  duePayment    DuePayment?
+  areaRental    AreaRental?
+
+  @@index([memberId])
+  @@index([paidAt])
+  @@index([saleId])
+  @@index([sessionId])
+  @@index([subscriptionId])
+  @@index([trainerId, paidAt])
+  @@index([type, paidAt])
+  @@index([voucherId])
+}
+
+model Employee {
+  id             String   @id @default(cuid())
+  fullName       String
+  phone          String   @unique
+  email          String?
+  position       String
+  employmentType String   @default("FULL_TIME") // FULL_TIME | PART_TIME | CONTRACTOR
+  baseSalary     Float    @default(0)
+  hourlyRate     Float?
+  hireDate       DateTime @default(now())
+  isActive       Boolean  @default(true)
+  notes          String?
+  taskCategory   String? // COACH_ATTENDANCE | PHOTOGRAPHY | VIDEOGRAPHY | EDITING | SOCIAL_MEDIA | RECEPTIONIST | STEWARD — which daily task checklist this employee sees
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  attendances EmployeeAttendance[]
+  payrolls    Payroll[]
+  tasks       StaffTask[]
+  dues        DuePayment[]
+  taskCompletions TaskCompletion[]
+
+  @@index([isActive])
+}
+
+model StaffTask {
+  id              String   @id @default(cuid())
+  employeeId      String
+  employee        Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  category        String // COACH_ATTENDANCE | PHOTOGRAPHY | VIDEOGRAPHY | EDITING | SOCIAL_MEDIA | RECEPTIONIST | STEWARD
+  title           String
+  description     String?
+  date            DateTime @default(now())
+  status          String   @default("PENDING") // PENDING | DONE | MISSED | PRESENT | ABSENT | LATE
+  bonusAmount     Float    @default(0)
+  bonusReason     String?
+  deductionAmount Float    @default(0)
+  deductionReason String?
+  createdById     String?
+  createdBy       User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  appliedPayrollId String?
+  appliedPayroll  Payroll? @relation(fields: [appliedPayrollId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([employeeId, date])
+  @@index([category, date])
+  @@index([appliedPayrollId])
+}
+
+model EmployeeAttendance {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  checkIn     DateTime
+  checkOut    DateTime?
+  hoursWorked Float?
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([employeeId, checkIn])
+}
+
+model Payroll {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  periodStart DateTime
+  periodEnd   DateTime
+  baseSalary  Float
+  bonus       Float     @default(0)
+  commission  Float     @default(0)
+  deductions  Float     @default(0)
+  netPay      Float
+  paid        Boolean   @default(false)
+  paidAt      DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  expense Expense?
+  tasks   StaffTask[]
+
+  @@index([employeeId, periodEnd])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  category    String
+  amount      Float
+  description String?
+  paidAt      DateTime @default(now())
+  createdAt   DateTime @default(now())
+  payrollId   String?  @unique
+  payroll     Payroll? @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+
+  @@index([paidAt])
+}
+
+model DuePayment {
+  id           String    @id @default(cuid())
+  payerType    String // MEMBER | TRAINER | EMPLOYEE
+  memberId     String?
+  member       Member?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  trainerId    String?
+  trainer      Trainer?  @relation(fields: [trainerId], references: [id], onDelete: SetNull)
+  employeeId   String?
+  employee     Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  amount       Float
+  dueDate      DateTime
+  category     String // SUBSCRIPTION_BALANCE | TRAINER_RENTAL | SALARY_ADVANCE | OTHER
+  description  String?
+  status       String    @default("PENDING") // PENDING | PAID | CANCELLED
+  paymentId    String?   @unique
+  payment      Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  remindedAt   DateTime?
+  notes        String?
+  createdById  String
+  createdBy    User      @relation(fields: [createdById], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  rental AreaRental?
+
+  @@index([status, dueDate])
+  @@index([payerType])
+  @@index([memberId])
+  @@index([trainerId])
+  @@index([employeeId])
+}
+
+model AreaRental {
+  id              String      @id @default(cuid())
+  trainerId       String?
+  trainer         Trainer?    @relation(fields: [trainerId], references: [id], onDelete: SetNull)
+  areaName        String
+  rentFee         Float
+  startTime       DateTime
+  endTime         DateTime
+  expectedMembers Int?
+  notes           String?
+  paymentId       String?     @unique
+  payment         Payment?    @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  duePaymentId    String?     @unique
+  duePayment      DuePayment? @relation(fields: [duePaymentId], references: [id], onDelete: SetNull)
+  createdById     String
+  createdBy       User        @relation(fields: [createdById], references: [id])
+  createdAt       DateTime    @default(now())
+
+  @@index([trainerId, startTime])
+}
+
+model Measurement {
+  id         String   @id @default(cuid())
+  memberId   String
+  member     Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  date       DateTime @default(now())
+  weightKg   Float?
+  heightCm   Float?
+  bodyFatPct Float?
+  musclePct  Float?
+  chestCm    Float?
+  waistCm    Float?
+  hipsCm     Float?
+  armCm      Float?
+  thighCm    Float?
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@index([memberId, date])
+}
+
+// Editable roster of exercises for the 2-minute max-reps fitness test, grouped
+// by test type. Staff can rename/add/remove/reorder these at any time; past
+// FitnessTestResult rows keep pointing at the same exercise row so history
+// stays intact even if the name later changes.
+model FitnessTestExercise {
+  id        String   @id @default(cuid())
+  testType  String // UPPER_BODY | LOWER_BODY | CORE | FULL_BODY
+  name      String
+  nameAr    String?
+  category  String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  results FitnessTestResult[]
+
+  @@index([testType, isActive, sortOrder])
+}
+
+// One row per member per time they run a test sheet. Retesting the same
+// member+type every 4 weeks just creates another session, so history and
+// progress can be read off by ordering sessions by date.
+model FitnessTestSession {
+  id        String   @id @default(cuid())
+  memberId  String
+  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  testType  String // UPPER_BODY | LOWER_BODY | CORE | FULL_BODY
+  date      DateTime @default(now())
+  notes     String?
+  createdAt DateTime @default(now())
+
+  results FitnessTestResult[]
+
+  @@index([memberId, testType, date])
+}
+
+model FitnessTestResult {
+  id         String              @id @default(cuid())
+  sessionId  String
+  session    FitnessTestSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exerciseId String
+  exercise   FitnessTestExercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  reps       Int
+
+  @@unique([sessionId, exerciseId])
+  @@index([exerciseId])
+}
+
+model TrainingPlan {
+  id        String    @id @default(cuid())
+  memberId  String
+  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  trainerId String?
+  trainer   Trainer?  @relation(fields: [trainerId], references: [id], onDelete: SetNull)
+  title     String
+  goal      String?
+  startDate DateTime  @default(now())
+  endDate   DateTime?
+  exercises String // JSON-encoded exercise list
+  notes     String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([memberId])
+}
+
+model MessageTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  body      String
+  type      String   @default("OTHER") // WELCOME | SUBSCRIPTION_EXPIRY | PAYMENT_DUE | BIRTHDAY | PROMOTIONAL | OTHER
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model Notification {
+  id           String    @id @default(cuid())
+  memberId     String?
+  member       Member?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  channel      String    @default("WHATSAPP") // WHATSAPP | SMS | EMAIL | IN_APP
+  type         String    @default("OTHER") // WELCOME | SUBSCRIPTION_EXPIRY | PAYMENT_DUE | BIRTHDAY | PROMOTIONAL | OTHER
+  recipient    String
+  subject      String?
+  body         String
+  status       String    @default("QUEUED") // QUEUED | SENT | FAILED | CANCELLED
+  sentAt       DateTime?
+  errorMsg     String?
+  scheduledFor DateTime?
+  attempts     Int?      @default(0)
+  createdAt    DateTime  @default(now())
+
+  @@index([memberId])
+  @@index([status, scheduledFor])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  String? // JSON-encoded diff/context
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+/// أصول الجيم — المعدات وكمياتها وقيمتها واستهلاكها
+model Equipment {
+  id                        String    @id @default(cuid())
+  name                      String
+  nameAr                    String?
+  category                  String    @default("OTHER") // FLOORING | WEIGHTS | RIGS | COMBAT | FURNITURE | ELECTRONICS | OTHER
+  quantity                  Int       @default(1)
+  unitPrice                 Float     @default(0)
+  purchaseDate              DateTime  @default(now())
+  lifespanMonths            Int       @default(60) // العمر الافتراضي للاستخدام
+  expiryDate                DateTime? // لو فاضي بيتحسب من تاريخ الشراء + العمر الافتراضي
+  conditionPct              Int? // تقييم يدوي للحالة 0..100، لو فاضي بيتحسب من الاستهلاك
+  maintenanceIntervalMonths Int       @default(6)
+  maintenanceCost           Float     @default(0) // تكلفة الصيانة التقديرية للمرة الواحدة
+  lastMaintenanceAt         DateTime?
+  location                  String?
+  supplier                  String?
+  notes                     String?
+  status                    String    @default("IN_USE") // IN_USE | STORED | RETIRED
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  maintenanceLogs EquipmentMaintenance[]
+
+  @@index([category])
+  @@index([status])
+}
+
+/// سجل الصيانة والاستبدال لكل معدة
+model EquipmentMaintenance {
+  id          String    @id @default(cuid())
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  type        String    @default("MAINTENANCE") // MAINTENANCE | REPAIR | REPLACEMENT | INSPECTION
+  performedAt DateTime  @default(now())
+  cost        Float     @default(0)
+  quantity    Int       @default(0) // عدد القطع اللي اتصانت أو اتستبدلت
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([equipmentId])
+  @@index([performedAt])
+}
+
+/// برنامج الولاء — الفئات ونقاط الأعضاء وسجل الحركات والمكافآت
+model LoyaltyTier {
+  id        String   @id @default(cuid())
+  name      String
+  nameAr    String?
+  minPoints Int
+  perks     String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts LoyaltyAccount[]
+
+  @@index([minPoints])
+}
+
+model LoyaltyAccount {
+  id             String   @id @default(cuid())
+  memberId       String   @unique
+  member         Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  pointsBalance  Int      @default(0)
+  lifetimePoints Int      @default(0)
+  tierId         String?
+  tier           LoyaltyTier? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  transactions LoyaltyTransaction[]
+
+  @@index([tierId])
+}
+
+model LoyaltyTransaction {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  type        String // EARN | REDEEM | ADJUST | EXPIRE
+  points      Int
+  source      String // PAYMENT | ATTENDANCE | MANUAL | REWARD_REDEMPTION
+  sourceId    String?
+  note        String?
+  createdById String?
+  createdBy   User?    @relation("LoyaltyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([source, sourceId])
+}
+
+model LoyaltyReward {
+  id          String   @id @default(cuid())
+  name        String
+  nameAr      String?
+  pointsCost  Int
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// تعديلات موظفي الاستقبال على بيانات الأعضاء/الاشتراكات تنتظر موافقة الإدارة
+model PendingChange {
+  id             String    @id @default(cuid())
+  entity         String // MEMBER | SUBSCRIPTION
+  entityId       String
+  action         String // EDIT | DELETE
+  payload        String? // JSON-encoded proposed field values; null for DELETE
+  previousValues String // JSON-encoded snapshot of the row before the change
+  status         String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  requestedById  String
+  requestedBy    User      @relation("PendingChangeRequestedBy", fields: [requestedById], references: [id])
+  reviewedById   String?
+  reviewedBy     User?     @relation("PendingChangeReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewNote     String?
+  createdAt      DateTime  @default(now())
+  reviewedAt     DateTime?
+
+  @@index([status, createdAt])
+  @@index([entity, entityId])
+  @@index([requestedById])
+}
+
+model AdminNotification {
+  id           String   @id @default(cuid())
+  type         String   @default("PENDING_CHANGE")
+  referenceId  String
+  message      String
+  isRead       Boolean  @default(false)
+  targetUserId String?
+  targetUser   User?    @relation("AdminNotificationTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([isRead, createdAt])
+  @@index([targetUserId])
+}
+
+/// طلبات حجز الحصة التجريبية من صفحة الحجز العامة (بدون تسجيل دخول)
+model TrialLead {
+  id                String    @id @default(cuid())
+  fullName          String
+  phone             String
+  preferredSport    String?
+  preferredTime     String?
+  message           String?
+  status            String    @default("NEW") // NEW | CONTACTED | CONVERTED | DISMISSED
+  convertedMemberId String?
+  createdAt         DateTime  @default(now())
+
+  @@index([status, createdAt])
+}
+
+/// خطة غذائية يضيفها الكابتن لعضو معيّن — رابط خارجي مبدئياً، PDF مخصص لاحقاً
+model NutritionPlan {
+  id          String   @id @default(cuid())
+  memberId    String
+  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  trainerId   String?
+  trainer     Trainer? @relation(fields: [trainerId], references: [id], onDelete: SetNull)
+  title       String
+  linkUrl     String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([memberId])
+  @@index([trainerId])
+}
+
+/// آراء وشكاوى العملاء — عامة بدون تسجيل دخول، بدون اسم عمداً
+model Feedback {
+  id        String   @id @default(cuid())
+  body      String
+  category  String   @default("GENERAL") // GENERAL | COMPLAINT | SUGGESTION | PRAISE
+  status    String   @default("NEW") // NEW | REVIEWED
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+}
+
+/// إيرادات تاريخية مستوردة من إكسيل (السنوات الأربع الماضية) — إجمالي شهري لكل كابتن فقط، بدون بيانات أعضاء
+model HistoricalRevenue {
+  id         String   @id @default(cuid())
+  coachName  String
+  year       Int
+  month      Int // 1-12
+  amount     Float
+  createdAt  DateTime @default(now())
+
+  @@unique([coachName, year, month])
+  @@index([year, month])
+}
+
+/// قوالب المهام اليومية الثابتة لكل فئة وظيفية — تُعرض كتشيك ليست يومي بدون توليد مسبق
+model TaskTemplate {
+  id           String   @id @default(cuid())
+  category     String // COACH_ATTENDANCE | PHOTOGRAPHY | VIDEOGRAPHY | EDITING | SOCIAL_MEDIA | RECEPTIONIST | STEWARD
+  title        String
+  description  String?
+  expectedTime String? // "HH:MM" — لحساب التأخير عند تسجيل الإنجاز
+  quantityLabel String? // مثال: "عدد المنشورات" — لو موجودة يُطلب رقم عند التحديد كمكتمل
+  sortOrder    Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  completions TaskCompletion[]
+
+  @@index([category, isActive, sortOrder])
+}
+
+model TaskCompletion {
+  id          String   @id @default(cuid())
+  templateId  String
+  template    TaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date        DateTime // منتصف ليل اليوم المقصود — يستخدم للتجميع اليومي/الشهري
+  quantity    Int?
+  note        String?
+  completedAt DateTime @default(now())
+  createdById String?
+
+  @@unique([templateId, employeeId, date])
+  @@index([employeeId, date])
+  @@index([templateId, date])
+}
